@@ -1,0 +1,27 @@
+{
+  "id": "neodex.dataforge",
+  "name": "DataForge",
+  "version": "1.0.0",
+  "author": "NDesumeur",
+  "description": "Ouvre et transforme tes données en tableau : CSV (séparateur deviné, guillemets, nombres à la française), TSV copié d'un tableur ou JSON. Trie, filtre, regarde les statistiques et le graphique de chaque colonne, ajoute des colonnes calculées par formule, renomme, nettoie, enlève les doublons, annule, puis exporte en CSV, TSV, JSON, Markdown ou SQL.",
+  "icon": "icon.png",
+  "entry": "index.js",
+  "view": "dataforge",
+  "neobase": ">=4.0.0",
+  "type": "app",
+  "category": "Outils",
+  "mobile": true,
+  "compatibility": [
+    "windows",
+    "android",
+    "linux"
+  ],
+  "syncMode": "fusion",
+  "syncInfo": "Le dernier tableau ouvert (s'il n'est pas trop gros).",
+  "system": false,
+  "dependencies": {},
+  "sdk": "2.1.0",
+  "permissions": [
+    "storage"
+  ]
+}
