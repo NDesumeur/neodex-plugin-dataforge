@@ -3,7 +3,7 @@
   "name": "DataForge",
   "version": "1.1.0",
   "author": "NDesumeur",
-  "description": "Ouvre et transforme tes données en tableau : CSV (séparateur deviné, guillemets, nombres à la française), TSV copié d'un tableur ou JSON. Trie, filtre, regarde les statistiques et le graphique de chaque colonne, ajoute des colonnes calculées par formule, renomme, nettoie, enlève les doublons, annule, puis exporte en CSV, TSV, JSON, Markdown ou SQL. Joindre deux fichiers par une colonne commune, ouvrir et enregistrer en Excel (.xlsx), textes plus grands.",
+  "description": "Ouvre et transforme tes données en tableau : CSV (séparateur deviné, guillemets, nombres à la française), TSV copié d'un tableur, JSON ou Excel (.xlsx). Joins deux fichiers par une colonne commune. Trie, filtre, regarde les statistiques et le graphique de chaque colonne, ajoute des colonnes calculées par formule, renomme, nettoie, enlève les doublons, annule, puis exporte en Excel, CSV, TSV, JSON, Markdown ou SQL. Joindre deux fichiers par une colonne commune, ouvrir et enregistrer en Excel (.xlsx), textes plus grands.",
   "icon": "icon.png",
   "entry": "index.js",
   "view": "dataforge",
