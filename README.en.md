@@ -31,3 +31,9 @@ CSV (`,` or `;`), TSV, JSON, Markdown or SQL (`INSERT INTO`), to download or cop
 ## Data
 
 The last opened table is kept in the plugin folder (unless it is very big). Permission: `storage` only.
+
+## Join, Excel and readability (1.1.0)
+
+- **Join a file**: open a second file (CSV, TSV, JSON or Excel), pick your column and its column (DataForge suggests the one with the same name), then “Keep all my rows” or “Only matching rows”. Its columns are added on the right; case and surrounding spaces are ignored when comparing. Before joining, DataForge tells you how many of your rows find a match. ↶ Undo reverts the join.
+- **Excel**: “Open a file” reads .xlsx (the first sheet; dates become dd/mm/yyyy) and export offers “Excel (.xlsx)”. Numbers, even in French notation, become real numbers in Excel; numbers starting with 0 stay text. The old .xls format is not read: save it as .xlsx first.
+- **Readability**: larger text, and the table uses the window height.

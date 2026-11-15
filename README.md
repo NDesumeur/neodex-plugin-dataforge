@@ -31,3 +31,9 @@ CSV (`,` ou `;`), TSV, JSON, Markdown ou SQL (`INSERT INTO`), à télécharger o
 ## Données
 
 Le dernier tableau ouvert est gardé dans le dossier du plugin (sauf s'il est très gros). Autorisation : `storage` seulement.
+
+## Jointure, Excel et lisibilité (1.1.0)
+
+- **Joindre un fichier** : ouvre un deuxième fichier (CSV, TSV, JSON ou Excel), choisis ta colonne et la sienne (DataForge propose d’office celle qui porte le même nom), puis « Garder toutes mes lignes » ou « Seulement celles qui correspondent ». Ses colonnes s’ajoutent à droite ; les majuscules et les espaces autour sont ignorés pour comparer. Avant de joindre, DataForge dit combien de tes lignes trouvent une correspondance. ↶ Annuler défait la jointure.
+- **Excel** : « Ouvrir un fichier » lit les .xlsx (la première feuille ; les dates deviennent jj/mm/aaaa) et l’export propose « Excel (.xlsx) ». Les nombres, même écrits à la française, deviennent de vrais nombres dans Excel ; les numéros qui commencent par 0 restent du texte. L’ancien format .xls n’est pas lu : enregistre-le d’abord en .xlsx.
+- **Lisibilité** : textes plus grands, et le tableau prend la hauteur de la fenêtre.

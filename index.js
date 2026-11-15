@@ -5,23 +5,25 @@ const CSS = `
 .dfTop{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
 .dfTop .btn,.dfRow .btn{width:auto;margin:0;padding:4px 10px}
 .dfTop .f,.dfRow .f{width:auto;flex:1;min-width:0;margin:0}
-.dfGrid{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:12px}
+.dfTop .f{min-width:200px}.dfRow>input.f{min-width:150px}
+.dfGrid{display:grid;grid-template-columns:minmax(0,1fr) clamp(300px,25vw,420px);gap:12px}
 @media (max-width:950px){.dfGrid{grid-template-columns:minmax(0,1fr)}}
-.dfTable{overflow:auto;max-height:480px;border:2px solid var(--line);background:var(--bg0)}
-.dfTable table{border-collapse:collapse;font:12px monospace;min-width:100%}
-.dfTable th{position:sticky;top:0;background:#241c40;color:#fff;cursor:var(--cp,pointer);text-align:left;white-space:nowrap;padding:4px 8px;border-bottom:2px solid var(--line)}
+.dfTable{overflow:auto;max-height:clamp(300px,calc(100vh - 250px),900px);border:2px solid var(--line);background:var(--bg0)}
+.dfTable table{border-collapse:collapse;font:clamp(14px,.95vw,16px) monospace;min-width:100%}
+.dfTable th{position:sticky;top:0;background:#241c40;color:#fff;cursor:var(--cp,pointer);text-align:left;white-space:nowrap;padding:6px 10px;border-bottom:2px solid var(--line)}
 .dfTable th.sel{background:rgba(var(--pkr),.45)}
-.dfTable td{padding:2px 8px;border-bottom:1px solid #241c40;white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis;color:var(--lilac)}
+.dfTable td{padding:4px 10px;border-bottom:1px solid #241c40;white-space:nowrap;max-width:280px;overflow:hidden;text-overflow:ellipsis;color:var(--lilac)}
 .dfTable td.num{text-align:right;color:#c8e8ff}
 .dfTable td.nul{color:#5a4a8a;font-style:italic}
 .dfTable tr:hover td{background:#16122a}
-.dfStats{font:12px monospace;color:var(--lilac);line-height:1.6}
+.dfStats{font:15px monospace;color:var(--lilac);line-height:1.6}
 .dfStats b{color:#fff}
 .dfBars{display:block;width:100%;image-rendering:pixelated;margin-top:6px;background:#0b0816;border:2px solid var(--line)}
 .dfRow{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:6px 0}
-.dfIn{width:100%;font:12px monospace;min-height:120px}
-.dfMsg{font-size:12px;color:#ffd34f;min-height:16px;margin-top:4px}
-.dfHelp{font-size:12px;color:var(--lilac);line-height:1.5}
+.dfIn{width:100%;font:15px monospace;min-height:140px}
+.dfMsg{font-size:14px;color:#ffd34f;min-height:16px;margin-top:4px}
+.dfHelp{font-size:14px;color:var(--lilac);line-height:1.5}
+.dfJoin{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}.dfJoin .dfRow{margin:0}.dfJoin .f{flex:0 1 auto}.dfJoin b{color:#fff;font-weight:normal}
 `;
 // ---------- lire ----------
 function guessSep(text) { const line = text.split(/\r?\n/).slice(0, 5).join('\n'); let best = ',', n = -1; for (const s of [',', ';', '\t', '|']) { const c = line.split(s).length; if (c > n) { n = c; best = s; } } return best; }
@@ -40,6 +42,83 @@ function parse(text) {
     return {cols, rows: j.map(o => cols.map(c => { const v = o && typeof o === 'object' ? o[c] : o; return v === undefined || v === null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v); })), from: 'JSON'}; }
   const sep = guessSep(t), r = parseCSV(t, sep), n = Math.max(...r.map(x => x.length)); const cols = r[0].map((c, i) => c.trim() || 'colonne ' + (i + 1)); while (cols.length < n) cols.push('colonne ' + (cols.length + 1));
   return {cols: uniq(cols), rows: r.slice(1).map(x => cols.map((_, i) => x[i] ?? '')), from: {',': 'CSV', ';': 'CSV ;', '\t': 'TSV', '|': 'CSV |'}[sep]};
+}
+// ---------- Excel (.xlsx) : une archive zip de fichiers XML, lue avec la décompression du navigateur, écrite sans compression ----------
+async function unzip(buf) {  // nom → octets
+  const d = new DataView(buf), u8 = new Uint8Array(buf), out = {};
+  let e = buf.byteLength - 22; while (e >= 0 && d.getUint32(e, true) !== 0x06054b50) e--;
+  if (e < 0) throw new Error('ce n’est pas un fichier Excel (.xlsx)');
+  let p = d.getUint32(e + 16, true); const n = d.getUint16(e + 10, true);
+  for (let k = 0; k < n; k++) {
+    if (d.getUint32(p, true) !== 0x02014b50) throw new Error('fichier Excel abîmé');
+    const method = d.getUint16(p + 10, true), size = d.getUint32(p + 20, true), nl = d.getUint16(p + 28, true), xl = d.getUint16(p + 30, true), cl = d.getUint16(p + 32, true), off = d.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(u8.subarray(p + 46, p + 46 + nl)), at = off + 30 + d.getUint16(off + 26, true) + d.getUint16(off + 28, true), raw = u8.subarray(at, at + size);
+    out[name] = method === 0 ? raw : method === 8 ? new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer()) : null;
+    p += 46 + nl + xl + cl;
+  }
+  return out;
+}
+async function readXlsx(buf) {  // la première feuille ; les dates deviennent jj/mm/aaaa
+  const z = await unzip(buf), xml = n => new DOMParser().parseFromString(z[n] ? new TextDecoder().decode(z[n]) : '<x/>', 'application/xml'), tags = (node, t) => [...node.getElementsByTagName(t)];
+  let sheet = 'xl/worksheets/sheet1.xml';
+  const rid = tags(xml('xl/workbook.xml'), 'sheet')[0]?.getAttribute('r:id');
+  if (rid) { const t = tags(xml('xl/_rels/workbook.xml.rels'), 'Relationship').find(r => r.getAttribute('Id') === rid)?.getAttribute('Target'); if (t) sheet = t.startsWith('/') ? t.slice(1) : 'xl/' + t.replace(/^\.\//, ''); }
+  if (!z[sheet]) throw new Error('feuille introuvable dans le fichier Excel');
+  const strings = tags(xml('xl/sharedStrings.xml'), 'si').map(si => tags(si, 't').map(t => t.textContent).join(''));
+  const st = xml('xl/styles.xml'), custom = new Map(tags(st, 'numFmt').map(f => [+f.getAttribute('numFmtId'), f.getAttribute('formatCode') || '']));
+  const xfs = tags(st, 'cellXfs')[0], isDate = xfs ? tags(xfs, 'xf').map(x => { const id = +x.getAttribute('numFmtId'); return (id >= 14 && id <= 22) || (id >= 45 && id <= 47) || /[dmy]/i.test((custom.get(id) || '').replace(/\[[^\]]*\]|"[^"]*"/g, '')); }) : [];
+  const day = v => { const t = new Date(Math.round((v - 25569) * 86400000)).toISOString(); return t.slice(0, 10).split('-').reverse().join('/') + (v % 1 ? ' ' + t.slice(11, 16) : ''); };
+  const grid = [];
+  for (const row of tags(xml(sheet), 'row')) {
+    const r = []; let next = 0;
+    for (const c of tags(row, 'c')) {
+      const ref = c.getAttribute('r'), col = ref ? [...ref.replace(/[0-9]+/g, '')].reduce((a, ch) => a * 26 + ch.charCodeAt(0) - 64, 0) - 1 : next; next = col + 1;
+      const t = c.getAttribute('t'), v = tags(c, 'v')[0]?.textContent ?? '';
+      r[col] = t === 's' ? strings[+v] ?? '' : t === 'inlineStr' ? tags(c, 't').map(x => x.textContent).join('') : t === 'b' ? (v === '1' ? 'VRAI' : 'FAUX') : t === 'str' || t === 'e' || v === '' ? v
+        : isDate[+c.getAttribute('s')] ? day(+v) : String(+(+v).toPrecision(15));  // 0.1 + 0.2 enregistré par Excel : 0.3
+    }
+    const rn = +row.getAttribute('r') - 1; grid[rn >= 0 ? rn : grid.length] = r;
+  }
+  const all = grid.filter(Boolean).map(r => Array.from(r, v => v ?? '')).filter(r => r.some(v => v !== ''));
+  if (!all.length) throw new Error('feuille vide');
+  const n = Math.max(...all.map(r => r.length)), cols = Array.from({length: n}, (_, i) => String(all[0][i] ?? '').trim() || 'colonne ' + (i + 1));
+  return {cols: uniq(cols), rows: all.slice(1).map(r => cols.map((_, i) => r[i] ?? '')), from: 'Excel'};
+}
+const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+const crc32 = u => { let c = ~0; for (const x of u) c = CRC[(c ^ x) & 255] ^ (c >>> 8); return ~c >>> 0; };
+function zip(files) {  // {nom: texte} → une archive zip sans compression
+  const enc = new TextEncoder(), parts = [], cd = []; let off = 0;
+  for (const [name, text] of Object.entries(files)) {
+    const nm = enc.encode(name), data = enc.encode(text), crc = crc32(data), h = new DataView(new ArrayBuffer(30)), c = new DataView(new ArrayBuffer(46));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(12, 33, true); h.setUint32(14, crc, true); h.setUint32(18, data.length, true); h.setUint32(22, data.length, true); h.setUint16(26, nm.length, true);
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(14, 33, true); c.setUint32(16, crc, true); c.setUint32(20, data.length, true); c.setUint32(24, data.length, true); c.setUint16(28, nm.length, true); c.setUint32(42, off, true);
+    parts.push(new Uint8Array(h.buffer), nm, data); cd.push(new Uint8Array(c.buffer), nm); off += 30 + nm.length + data.length;
+  }
+  const n = Object.keys(files).length, e = new DataView(new ArrayBuffer(22));
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, n, true); e.setUint16(10, n, true); e.setUint32(12, cd.reduce((a, x) => a + x.length, 0), true); e.setUint32(16, off, true);
+  return new Blob([...parts, ...cd, new Uint8Array(e.buffer)], {type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+}
+function writeXlsx(cols, rows) {  // les nombres (même à la française) deviennent de vrais nombres ; 0612… et les très longs numéros restent du texte
+  const esc = s => s.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'})[c]);
+  const colName = i => { let s = ''; for (i++; i; i = Math.floor((i - 1) / 26)) s = String.fromCharCode(65 + (i - 1) % 26) + s; return s; };
+  const cell = (v, r, i) => { if (v === '') return ''; const ref = colName(i) + r, n = num(v); return !isNaN(n) && !/^[-+]?0[0-9]/.test(v.trim()) && v.replace(/[^0-9]/g, '').length < 16 ? `<c r="${ref}"><v>${n}</v></c>` : `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${esc(v)}</t></is></c>`; };
+  const X = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n', R = 'http://schemas.openxmlformats.org/', T = R + 'officeDocument/2006/relationships';
+  return zip({
+    '[Content_Types].xml': X + `<Types xmlns="${R}package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`,
+    '_rels/.rels': X + `<Relationships xmlns="${R}package/2006/relationships"><Relationship Id="rId1" Type="${T}/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
+    'xl/workbook.xml': X + `<workbook xmlns="${R}spreadsheetml/2006/main" xmlns:r="${T}"><sheets><sheet name="Données" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+    'xl/_rels/workbook.xml.rels': X + `<Relationships xmlns="${R}package/2006/relationships"><Relationship Id="rId1" Type="${T}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+    'xl/worksheets/sheet1.xml': X + `<worksheet xmlns="${R}spreadsheetml/2006/main"><sheetData>${[cols, ...rows].map((r, j) => `<row r="${j + 1}">${r.map((v, i) => cell(String(v ?? ''), j + 1, i)).join('')}</row>`).join('')}</sheetData></worksheet>`,
+  });
+}
+// ---------- joindre : les lignes de B ajoutées à celles de A dont la colonne ia vaut la colonne ib de B (majuscules et espaces autour ignorés) ----------
+function joinTables(A, B, ia, ib, keepAll) {
+  const key = v => String(v ?? '').trim().toLowerCase(), idx = new Map();
+  B.rows.forEach(r => { const k = key(r[ib]); if (k) { if (!idx.has(k)) idx.set(k, []); idx.get(k).push(r); } });
+  const extra = B.cols.map((_, i) => i).filter(i => i !== ib), rows = []; let hit = 0;
+  for (const r of A.rows) { const m = idx.get(key(r[ia])) || []; if (m.length) hit++;
+    if (m.length) for (const x of m) rows.push([...r, ...extra.map(i => x[i] ?? '')]); else if (keepAll) rows.push([...r, ...extra.map(() => '')]); }  // plusieurs correspondances : une ligne pour chacune
+  return {cols: uniq([...A.cols, ...extra.map(i => A.cols.includes(B.cols[i]) ? B.cols[i] + ' (2)' : B.cols[i])]), rows, from: A.from, hit};
 }
 const uniq = cols => cols.map((c, i) => cols.indexOf(c) === i ? c : c + ' ' + (i + 1));
 // un nombre, à la française (1 234,5) ou à l'anglaise (1,234.5)
@@ -73,6 +152,9 @@ export default async function (ctx) {
   { const d = parse('nom;prix;note\n"Dupont; fils";1 234,50;"il a dit ""oui""\nensuite"\nMarie;12;'), back = parse(FORMATS['CSV ;'](d.cols, d.rows));
     console.assert(d.rows.length === 2 && d.rows[0][0] === 'Dupont; fils' && num(d.rows[0][1]) === 1234.5 && d.rows[0][2].includes('\n') && JSON.stringify(back) === JSON.stringify({...d, from: 'CSV ;'}) && num('1,234.5') === 1234.5 && num('12%') === .12, 'dataforge : CSV');
     const j = parse('[{"a":1,"b":{"c":2}},{"a":null}]'), f = compileFormula('[prix] * 2 + len([nom])', d.cols);
+    const J = joinTables({cols: ['ville', 'n'], rows: [['Paris', '1'], ['Lyon', '2'], ['Nice', '3']]}, {cols: ['Ville', 'maire', 'n'], rows: [[' paris ', 'A', '9'], ['Lyon', 'B', '8'], ['Lyon', 'C', '7']]}, 0, 0, true);
+    console.assert(J.cols.join() === 'ville,n,maire,n (2)' && J.rows.length === 4 && J.hit === 2 && J.rows[0].join() === 'Paris,1,A,9' && J.rows[3].join() === 'Nice,3,,' && joinTables(J, J, 0, 0, false).rows.length === 6, 'dataforge : jointure');
+    writeXlsx(['nom', 'prix', 'tél', 'note'], [['Dupont & fils', '1 234,5', '0612345678', '<b>'], ['Marie', '12', '', 'é']]).arrayBuffer().then(readXlsx).then(x => console.assert(JSON.stringify(x.rows) === '[["Dupont & fils","1234.5","0612345678","<b>"],["Marie","12","","é"]]' && x.cols.join() === 'nom,prix,tél,note', 'dataforge : Excel', x));
     console.assert(j.cols.join() === 'a,b' && j.rows[1][0] === '' && f(d.rows[0]) === '2481' && (() => { try { compileFormula('fetch("x")', d.cols); return false; } catch { return true; } })(), 'dataforge : JSON et formules'); }
   let data = null; try { data = await ctx.folder.read('dataforge'); } catch {}
   const SAMPLE = 'ville;pays;habitants;superficie_km2\nParis;France;2 102 650;105,4\nLyon;France;522 250;47,87\nMarseille;France;873 076;240,6\nBruxelles;Belgique;196 828;32,61\nGenève;Suisse;203 856;15,93\nMontréal;Canada;1 762 949;431,5\nLausanne;Suisse;140 202;41,37\nToulouse;France;504 078;118,3\nLiège;Belgique;195 278;69,39\nQuébec;Canada;549 459;485,8';
@@ -81,25 +163,44 @@ export default async function (ctx) {
   let saveT = 0; const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { const big = T.rows.length * T.cols.length > 200000; ctx.folder.write('dataforge', big ? {selC} : {cols: T.cols, rows: T.rows, from: T.from, selC}).catch(() => {}); }, 600); };  // shortcut: un très gros tableau n'est pas gardé, il faudrait un fichier à part
   // ---------- l'interface ----------
   view.innerHTML = '';
-  const wrap = el('div', 'appWrap'), head = el('div', 'agHead'), top = el('div', 'dfTop'), lay = el('div', 'dfGrid'), main = el('div'), side = el('div', 'sysCard px');
+  const wrap = el('div', 'appWrap wide'), head = el('div', 'agHead'), top = el('div', 'dfTop'), lay = el('div', 'dfGrid'), main = el('div'), side = el('div', 'sysCard px');
   head.append(el('span', 'label', 'DataForge · données en tableau')); lay.append(main, side); wrap.append(head, top, lay); view.append(wrap);
-  const openB = el('button', 'btn px main', 'Ouvrir un fichier'), pasteB = el('button', 'btn px', 'Coller des données'), file = el('input'), search = el('input', 'f'), undoB = el('button', 'btn px', '↶ Annuler'), info = el('span', 'hint');
-  file.type = 'file'; file.accept = '.csv,.tsv,.txt,.json'; file.style.display = 'none'; search.placeholder = 'Filtrer les lignes…'; search.id = 'df_search'; info.id = 'df_info';
-  top.append(openB, pasteB, undoB, search, info, file);
+  const openB = el('button', 'btn px main', 'Ouvrir un fichier'), pasteB = el('button', 'btn px', 'Coller des données'), joinB = el('button', 'btn px', 'Joindre un fichier…'), file = el('input'), file2 = el('input'), search = el('input', 'f'), undoB = el('button', 'btn px', '↶ Annuler'), info = el('span', 'hint');
+  file.type = file2.type = 'file'; file.accept = file2.accept = '.csv,.tsv,.txt,.json,.xlsx'; file.style.display = file2.style.display = 'none'; file.id = 'df_file'; file2.id = 'df_file2'; joinB.title = 'Ajouter les colonnes d’un autre fichier, ligne par ligne, grâce à une colonne commune'; search.placeholder = 'Filtrer les lignes…'; search.id = 'df_search'; info.id = 'df_info';
+  top.append(openB, pasteB, joinB, undoB, search, info, file, file2);
   const pasteBox = el('div', 'sysCard px'); pasteBox.style.display = 'none';
   const ta = el('textarea', 'f dfIn'), go = el('button', 'btn px main', 'Lire'), msg = el('div', 'dfMsg'); ta.placeholder = 'Colle ici du CSV, du TSV (copié depuis un tableur) ou du JSON'; ta.id = 'df_paste';
   const pr = el('div', 'dfRow'); pr.append(go, btn('Fermer', () => pasteBox.style.display = 'none')); pasteBox.append(ta, pr, msg);
   const table = el('div', 'dfTable'); table.id = 'df_table';
-  main.append(pasteBox, table);
+  const joinBox = el('div', 'sysCard px dfJoin'); joinBox.style.display = 'none'; joinBox.id = 'df_join';
+  main.append(pasteBox, joinBox, table);
   const colTitle = el('span', 'label'), stats = el('div', 'dfStats'), bars = el('canvas', 'dfBars'), colOps = el('div', 'dfRow'), calc = el('div'), out = el('div');
   stats.id = 'df_stats'; side.append(colTitle, stats, bars, colOps, el('span', 'label', 'Nouvelle colonne'), calc, el('span', 'label', 'Exporter'), out);
   function btn(t, f, title) { const b = el('button', 'btn px', t); b.onclick = f; if (title) b.title = title; return b; }
   const snapshot = () => { history.push(JSON.stringify(T)); if (history.length > 30) history.shift(); };
   undoB.onclick = () => { const s = history.pop(); if (!s) return toast('Rien à annuler'); T = JSON.parse(s); selC = Math.min(selC, T.cols.length - 1); save(); render(); };
-  function load(text, name) { try { const t = parse(text); if (!t.cols.length) throw new Error('aucune colonne'); snapshot(); T = t; sortC = -1; filter = ''; search.value = ''; selC = Math.max(0, T.cols.findIndex((_, i) => T.rows.some(r => !isNaN(num(r[i]))))); msg.textContent = ''; pasteBox.style.display = 'none'; save(); render(); toast((name ? name + ' : ' : '') + T.rows.length + ' lignes'); }
-    catch (e) { msg.textContent = 'Lecture impossible : ' + e.message; pasteBox.style.display = ''; } }
+  const readFile = async f => { if (f.size > 30e6) throw new Error('fichier trop gros (30 Mo au plus)'); if (/\.xls$/i.test(f.name)) throw new Error('ancien format Excel (.xls) : enregistre-le en .xlsx'); return /\.xlsx$/i.test(f.name) ? readXlsx(await f.arrayBuffer()) : parse(await f.text()); };
+  function load(text, name) { try { loadT(typeof text === 'string' ? parse(text) : text, name); } catch (e) { msg.textContent = 'Lecture impossible : ' + e.message; pasteBox.style.display = ''; } }
+  function loadT(t, name) { { if (!t.cols.length) throw new Error('aucune colonne'); snapshot(); T = t; sortC = -1; filter = ''; search.value = ''; selC = Math.max(0, T.cols.findIndex((_, i) => T.rows.some(r => !isNaN(num(r[i]))))); msg.textContent = ''; pasteBox.style.display = 'none'; save(); render(); toast((name ? name + ' : ' : '') + T.rows.length + ' lignes'); }
+  }
   openB.onclick = () => file.click();
-  file.onchange = async () => { const f = file.files[0]; if (!f) return; if (f.size > 30e6) return toast('Fichier trop gros (30 Mo au plus)'); load(await f.text(), f.name); file.value = ''; };
+  file.onchange = async () => { const f = file.files[0]; if (!f) return; file.value = ''; try { load(await readFile(f), f.name); } catch (e) { toast('Lecture impossible : ' + e.message); } };
+  // ---------- joindre un deuxième fichier ----------
+  joinB.onclick = () => file2.click();
+  file2.onchange = async () => { const f = file2.files[0]; if (!f) return; file2.value = ''; let B; try { B = await readFile(f); } catch (e) { return toast('Lecture impossible : ' + e.message); } showJoin(B, f.name); };
+  function showJoin(B, name) {
+    const mine = el('select', 'f'), theirs = el('select', 'f'), mode = el('select', 'f'), what = el('div', 'hint'); mine.id = 'df_jmine'; theirs.id = 'df_jtheirs'; mode.id = 'df_jmode'; mine.translate = theirs.translate = false;
+    T.cols.forEach((c, i) => mine.append(new Option(c, i))); B.cols.forEach((c, i) => theirs.append(new Option(c, i)));
+    mode.append(new Option('Garder toutes mes lignes', 'all'), new Option('Seulement celles qui correspondent', 'match'));
+    { let best = null; T.cols.forEach((c, i) => { const k = B.cols.findIndex(d => d.trim().toLowerCase() === c.trim().toLowerCase()); if (k >= 0 && !best) best = [i, k]; }); if (best) { mine.value = best[0]; theirs.value = best[1]; } }  // une colonne au même nom : c'est sûrement elle
+    const preview = () => { const r = joinTables(T, B, +mine.value, +theirs.value, mode.value === 'all'); what.textContent = r.hit + ' de tes ' + T.rows.length + ' lignes trouvent une correspondance → ' + r.rows.length + ' lignes, ' + r.cols.length + ' colonnes.'; };
+    mine.onchange = theirs.onchange = mode.onchange = preview;
+    const ok = btn('Joindre', () => { const r = joinTables(T, B, +mine.value, +theirs.value, mode.value === 'all'); snapshot(); T = {cols: r.cols, rows: r.rows, from: T.from}; joinBox.style.display = 'none'; save(); render(); toast(r.hit + ' lignes complétées'); });
+    ok.classList.add('main'); ok.id = 'df_jgo';
+    const r1 = el('div', 'dfRow'), r2 = el('div', 'dfRow'), r3 = el('div', 'dfRow'), title = el('div'); title.append(el('span', '', 'Joindre '), Object.assign(el('b', '', name), {translate: false}), ' (' + B.rows.length + ' ', el('span', '', 'lignes'), ')');
+    r1.append(el('span', 'hint', 'Ma colonne'), mine, el('span', 'hint', '= sa colonne'), theirs); r2.append(mode); r3.append(ok, btn('Fermer', () => joinBox.style.display = 'none'));
+    joinBox.replaceChildren(title, r1, r2, what, r3); joinBox.style.display = ''; preview();
+  }
   pasteB.onclick = () => { pasteBox.style.display = ''; ta.focus(); };
   go.onclick = () => load(ta.value);
   search.oninput = () => { filter = search.value.toLowerCase(); renderTable(); };
@@ -134,7 +235,7 @@ export default async function (ctx) {
     if (isNum && counts.size > 8) { const mn = Math.min(...nums), mx = Math.max(...nums), k = 14; bins = Array.from({length: k}, (_, i) => [f(mn + (mx - mn) * i / k), 0]); nums.forEach(v => bins[Math.min(k - 1, Math.floor((v - mn) / ((mx - mn) || 1) * k))][1]++); }
     else bins = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 10);
     const top = Math.max(1, ...bins.map(b => b[1])), bw = W / Math.max(1, bins.length);
-    g.font = '9px monospace'; bins.forEach(([lab, n], i) => { const h = Math.round(n / top * (H - 22)); g.fillStyle = '#ff4fb0'; g.fillRect(Math.floor(i * bw) + 1, H - 12 - h, Math.max(1, Math.floor(bw) - 2), h); if (bw > 20) { g.fillStyle = '#8a7aa8'; g.fillText(String(lab).slice(0, Math.floor(bw / 6)), Math.floor(i * bw) + 1, H - 2); } });
+    g.font = '11px monospace'; bins.forEach(([lab, n], i) => { const h = Math.round(n / top * (H - 22)); g.fillStyle = '#ff4fb0'; g.fillRect(Math.floor(i * bw) + 1, H - 12 - h, Math.max(1, Math.floor(bw) - 2), h); if (bw > 20) { g.fillStyle = '#8a7aa8'; g.fillText(String(lab).slice(0, Math.floor(bw / 6)), Math.floor(i * bw) + 1, H - 2); } });
     colOps.replaceChildren(
       Object.assign(el('input', 'f'), {value: T.cols[c], title: 'Renommer la colonne', translate: false, onchange: e => { const n = e.target.value.trim(); if (!n || T.cols.includes(n)) { e.target.value = T.cols[c]; return; } snapshot(); T.cols[c] = n; save(); render(); }}),
       btn('Supprimer', () => { if (T.cols.length < 2) return; snapshot(); T.cols.splice(c, 1); T.rows.forEach(r => r.splice(c, 1)); selC = Math.max(0, c - 1); save(); render(); }),
@@ -152,11 +253,11 @@ export default async function (ctx) {
   const r1 = el('div', 'dfRow'), r2 = el('div', 'dfRow'); r1.append(fName); r2.append(fSrc, fGo);
   calc.append(r1, r2, fMsg, el('p', 'dfHelp', 'Les colonnes entre crochets, les opérations + - * / et les fonctions round, abs, min, max, upper, lower, len, concat, si(condition, oui, non).'));
   // ---------- l'export ----------
-  const fmt = el('select', 'f'); for (const k of Object.keys(FORMATS)) { const o = el('option', '', k); o.value = k; fmt.append(o); } fmt.value = data?.fmt || 'CSV'; fmt.translate = false;
-  const dl = btn('Télécharger', () => { const ext = {CSV: 'csv', 'CSV ;': 'csv', TSV: 'tsv', JSON: 'json', Markdown: 'md', SQL: 'sql'}[fmt.value], txt = exportText(), a = el('a'); a.href = URL.createObjectURL(new Blob(['﻿' + txt], {type: 'text/plain;charset=utf-8'})); a.download = 'donnees.' + ext; document.body.append(a); a.click(); a.remove(); });
-  const cp = btn('Copier', () => navigator.clipboard.writeText(exportText()).then(() => toast('Copié'), () => toast('Copie impossible')));
+  const fmt = el('select', 'f'); for (const k of ['Excel', ...Object.keys(FORMATS)]) { const o = el('option', '', k === 'Excel' ? 'Excel (.xlsx)' : k); o.value = k; fmt.append(o); } fmt.value = data?.fmt || 'CSV'; fmt.translate = false;
+  const dl = btn('Télécharger', () => { if (fmt.value === 'Excel') { const a = el('a'); a.href = URL.createObjectURL(writeXlsx(T.cols, view_(!onlyC.checked).map(i => T.rows[i]))); a.download = 'donnees.xlsx'; document.body.append(a); a.click(); a.remove(); return; } const ext = {CSV: 'csv', 'CSV ;': 'csv', TSV: 'tsv', JSON: 'json', Markdown: 'md', SQL: 'sql'}[fmt.value], txt = exportText(), a = el('a'); a.href = URL.createObjectURL(new Blob(['﻿' + txt], {type: 'text/plain;charset=utf-8'})); a.download = 'donnees.' + ext; document.body.append(a); a.click(); a.remove(); });
+  const cp = btn('Copier', () => navigator.clipboard.writeText(exportText()).then(() => toast(fmt.value === 'Excel' ? 'Copié en colonnes, à coller dans Excel' : 'Copié'), () => toast('Copie impossible')));
   const only = el('label', 'hint'), onlyC = el('input'); onlyC.type = 'checkbox'; only.append(onlyC, ' ', el('span', '', 'seulement les lignes filtrées'));
-  const exportText = () => FORMATS[fmt.value](T.cols, view_(!onlyC.checked).map(i => T.rows[i]));  // dans l'ordre du tri affiché
+  const exportText = () => FORMATS[fmt.value === 'Excel' ? 'TSV' : fmt.value](T.cols, view_(!onlyC.checked).map(i => T.rows[i]));  // dans l'ordre du tri affiché
   const er = el('div', 'dfRow'); er.append(fmt, dl, cp); out.append(er, only);
   function render() { renderTable(); renderSide(); fSrc.oninput(); }
   render();
