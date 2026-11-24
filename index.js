@@ -21,6 +21,7 @@ const CSS = `
 .dfBars{display:block;width:100%;image-rendering:pixelated;margin-top:6px;background:#0b0816;border:2px solid var(--line)}
 .dfRow{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:6px 0}
 .dfIn{width:100%;font:15px monospace;min-height:140px}
+.dfSteps{margin:4px 0 6px;padding-left:22px;font-size:14px;line-height:1.5;max-height:180px;overflow:auto}
 .dfMsg{font-size:14px;color:#ffd34f;min-height:16px;margin-top:4px}
 .dfHelp{font-size:14px;color:var(--lilac);line-height:1.5}
 .dfJoin{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}.dfJoin .dfRow{margin:0}.dfJoin .f{flex:0 1 auto}.dfJoin b{color:#fff;font-weight:normal}
@@ -143,6 +144,29 @@ function compileFormula(src, cols) {
   const f = new Function('row', 'num', `const v = i => { const n = num(row[i]); return isNaN(n) ? row[i] : n; }, {round, abs, min, max} = Math, upper = s => String(s).toUpperCase(), lower = s => String(s).toLowerCase(), len = s => String(s).length, concat = (...a) => a.join(''), si = (c, a, b) => c ? a : b; return (${js});`);
   return row => { const r = f(row, num); return r === undefined || r === null || (typeof r === 'number' && !isFinite(r)) ? '' : typeof r === 'number' ? String(Math.round(r * 1e4) / 1e4) : String(r); };
 }
+// les étapes : chaque changement du tableau est une étape, qui désigne les colonnes par leur nom ; une suite d'étapes (une recette) se rejoue sur un autre fichier
+const colOf = (T, name) => { const i = T.cols.indexOf(name); if (i < 0) throw new Error('la colonne « ' + name + ' » n’existe pas'); return i; };
+function applyStep(T, s, B) {
+  const cols = [...T.cols], rows = T.rows.map(r => [...r]), out = {cols, rows, from: T.from};
+  const i = s.col !== undefined ? colOf(T, s.col) : -1;
+  switch (s.op) {
+    case 'rename': if (!s.to || (cols.includes(s.to) && s.to !== s.col)) throw new Error('nom « ' + s.to + ' » déjà pris'); cols[i] = s.to; return out;
+    case 'delete': if (cols.length < 2) throw new Error('il faut garder au moins une colonne'); cols.splice(i, 1); rows.forEach(r => r.splice(i, 1)); return out;
+    case 'upper': rows.forEach(r => r[i] = r[i].toUpperCase()); return out;
+    case 'trim': rows.forEach(r => r[i] = r[i].trim().replace(/\s+/g, ' ')); return out;
+    case 'dedupe': { const seen = new Set(); out.rows = rows.filter(r => { const k = JSON.stringify(r); if (seen.has(k)) return false; seen.add(k); return true; }); return out; }
+    case 'empty': out.rows = rows.filter(r => r[i] !== ''); return out;
+    case 'keep': { const t = String(s.text || '').toLowerCase(); out.rows = rows.filter(r => r.some(v => v.toLowerCase().includes(t))); return out; }
+    case 'formula': { const f = compileFormula(s.src, cols); cols.push(cols.includes(s.name) ? s.name + ' ' + (cols.length + 1) : s.name); rows.forEach(r => { let v = ''; try { v = f(r); } catch {} r.push(v); }); return out; }
+    case 'join': { if (!B) throw new Error('il manque le fichier à joindre « ' + s.file + ' »'); const r = joinTables(T, B, i, colOf(B, s.theirs), s.all); return {cols: r.cols, rows: r.rows, from: T.from, hit: r.hit}; }
+  }
+  throw new Error('étape inconnue : ' + s.op);
+}
+const stepText = s => ({ rename: () => 'Renommer « ' + s.col + ' » en « ' + s.to + ' »', delete: () => 'Supprimer la colonne « ' + s.col + ' »', upper: () => 'Majuscules dans « ' + s.col + ' »',
+  trim: () => 'Espaces en trop dans « ' + s.col + ' »', dedupe: () => 'Enlever les lignes en double', empty: () => 'Enlever les lignes où « ' + s.col + ' » est vide',
+  keep: () => 'Garder les lignes qui contiennent « ' + s.text + ' »', formula: () => 'Nouvelle colonne « ' + s.name + ' » = ' + s.src,
+  join: () => 'Joindre « ' + s.file + ' » : « ' + s.col + ' » = « ' + s.theirs + ' »' + (s.all ? '' : ', seulement les lignes qui correspondent') })[s.op]?.() || s.op;
+
 export default async function (ctx) {
   const view = ctx.view;
   if (!ctx.host) { view.textContent = "Ce plugin doit être approuvé par NeoDex pour s'ouvrir."; return; }
@@ -155,12 +179,17 @@ export default async function (ctx) {
     const J = joinTables({cols: ['ville', 'n'], rows: [['Paris', '1'], ['Lyon', '2'], ['Nice', '3']]}, {cols: ['Ville', 'maire', 'n'], rows: [[' paris ', 'A', '9'], ['Lyon', 'B', '8'], ['Lyon', 'C', '7']]}, 0, 0, true);
     console.assert(J.cols.join() === 'ville,n,maire,n (2)' && J.rows.length === 4 && J.hit === 2 && J.rows[0].join() === 'Paris,1,A,9' && J.rows[3].join() === 'Nice,3,,' && joinTables(J, J, 0, 0, false).rows.length === 6, 'dataforge : jointure');
     writeXlsx(['nom', 'prix', 'tél', 'note'], [['Dupont & fils', '1 234,5', '0612345678', '<b>'], ['Marie', '12', '', 'é']]).arrayBuffer().then(readXlsx).then(x => console.assert(JSON.stringify(x.rows) === '[["Dupont & fils","1234.5","0612345678","<b>"],["Marie","12","","é"]]' && x.cols.join() === 'nom,prix,tél,note', 'dataforge : Excel', x));
+    { const R = [{op: 'rename', col: 'prix', to: 'montant'}, {op: 'trim', col: 'nom'}, {op: 'formula', name: 'double', src: '[montant] * 2'}, {op: 'keep', text: 'mar'}, {op: 'upper', col: 'nom'}];
+      const X = R.reduce((t, st) => applyStep(t, st), {cols: ['nom', 'prix'], rows: [['  Marie  Curie', '10'], ['Paul', '3'], ['Marc', '4,5']], from: 'CSV'});
+      let err = ''; try { applyStep({cols: ['a'], rows: []}, R[0]); } catch (e) { err = e.message; }
+      console.assert(X.cols.join() === 'nom,montant,double' && JSON.stringify(X.rows) === '[["MARIE CURIE","10","20"],["MARC","4,5","9"]]' && /« prix » n’existe pas/.test(err) && stepText(R[3]) === 'Garder les lignes qui contiennent « mar »', 'dataforge : recette', X, err); }
     console.assert(j.cols.join() === 'a,b' && j.rows[1][0] === '' && f(d.rows[0]) === '2481' && (() => { try { compileFormula('fetch("x")', d.cols); return false; } catch { return true; } })(), 'dataforge : JSON et formules'); }
   let data = null; try { data = await ctx.folder.read('dataforge'); } catch {}
   const SAMPLE = 'ville;pays;habitants;superficie_km2\nParis;France;2 102 650;105,4\nLyon;France;522 250;47,87\nMarseille;France;873 076;240,6\nBruxelles;Belgique;196 828;32,61\nGenève;Suisse;203 856;15,93\nMontréal;Canada;1 762 949;431,5\nLausanne;Suisse;140 202;41,37\nToulouse;France;504 078;118,3\nLiège;Belgique;195 278;69,39\nQuébec;Canada;549 459;485,8';
   let T = data?.cols ? {cols: data.cols, rows: data.rows, from: data.from || 'CSV'} : parse(SAMPLE);
-  let sortC = -1, sortDir = 1, filter = '', selC = data?.selC ?? 2, history = [];
-  let saveT = 0; const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { const big = T.rows.length * T.cols.length > 200000; ctx.folder.write('dataforge', big ? {selC} : {cols: T.cols, rows: T.rows, from: T.from, selC}).catch(() => {}); }, 600); };  // shortcut: un très gros tableau n'est pas gardé, il faudrait un fichier à part
+  let sortC = -1, sortDir = 1, filter = '', selC = data?.selC ?? 2, history = [], steps = data?.steps || [];
+  const recipes = data?.recipes || {};
+  let saveT = 0; const save = () => { clearTimeout(saveT); saveT = setTimeout(() => { const big = T.rows.length * T.cols.length > 200000; ctx.folder.write('dataforge', big ? {selC, recipes} : {cols: T.cols, rows: T.rows, from: T.from, selC, steps, recipes}).catch(() => {}); }, 600); };  // shortcut: un très gros tableau n'est pas gardé, il faudrait un fichier à part
   // ---------- l'interface ----------
   view.innerHTML = '';
   const wrap = el('div', 'appWrap wide'), head = el('div', 'agHead'), top = el('div', 'dfTop'), lay = el('div', 'dfGrid'), main = el('div'), side = el('div', 'sysCard px');
@@ -177,11 +206,13 @@ export default async function (ctx) {
   const colTitle = el('span', 'label'), stats = el('div', 'dfStats'), bars = el('canvas', 'dfBars'), colOps = el('div', 'dfRow'), calc = el('div'), out = el('div');
   stats.id = 'df_stats'; side.append(colTitle, stats, bars, colOps, el('span', 'label', 'Nouvelle colonne'), calc, el('span', 'label', 'Exporter'), out);
   function btn(t, f, title) { const b = el('button', 'btn px', t); b.onclick = f; if (title) b.title = title; return b; }
-  const snapshot = () => { history.push(JSON.stringify(T)); if (history.length > 30) history.shift(); };
-  undoB.onclick = () => { const s = history.pop(); if (!s) return toast('Rien à annuler'); T = JSON.parse(s); selC = Math.min(selC, T.cols.length - 1); save(); render(); };
+  const snapshot = () => { history.push(JSON.stringify({T, steps})); if (history.length > 30) history.shift(); };
+  undoB.onclick = () => { const s = history.pop(); if (!s) return toast('Rien à annuler'); ({T, steps} = JSON.parse(s)); selC = Math.min(selC, T.cols.length - 1); save(); render(); };
+  // un changement du tableau : appliqué, et noté dans les étapes
+  function doStep(st, B) { let n; try { n = applyStep(T, st, B); } catch (e) { toast('Impossible : ' + e.message, true); return null; } snapshot(); T = n; steps.push(st); save(); render(); return n; }
   const readFile = async f => { if (f.size > 30e6) throw new Error('fichier trop gros (30 Mo au plus)'); if (/\.xls$/i.test(f.name)) throw new Error('ancien format Excel (.xls) : enregistre-le en .xlsx'); return /\.xlsx$/i.test(f.name) ? readXlsx(await f.arrayBuffer()) : parse(await f.text()); };
   function load(text, name) { try { loadT(typeof text === 'string' ? parse(text) : text, name); } catch (e) { msg.textContent = 'Lecture impossible : ' + e.message; pasteBox.style.display = ''; } }
-  function loadT(t, name) { { if (!t.cols.length) throw new Error('aucune colonne'); snapshot(); T = t; sortC = -1; filter = ''; search.value = ''; selC = Math.max(0, T.cols.findIndex((_, i) => T.rows.some(r => !isNaN(num(r[i]))))); msg.textContent = ''; pasteBox.style.display = 'none'; save(); render(); toast((name ? name + ' : ' : '') + T.rows.length + ' lignes'); }
+  function loadT(t, name) { { if (!t.cols.length) throw new Error('aucune colonne'); snapshot(); T = t; steps = []; sortC = -1; filter = ''; search.value = ''; selC = Math.max(0, T.cols.findIndex((_, i) => T.rows.some(r => !isNaN(num(r[i]))))); msg.textContent = ''; pasteBox.style.display = 'none'; save(); render(); toast((name ? name + ' : ' : '') + T.rows.length + ' lignes'); }
   }
   openB.onclick = () => file.click();
   file.onchange = async () => { const f = file.files[0]; if (!f) return; file.value = ''; try { load(await readFile(f), f.name); } catch (e) { toast('Lecture impossible : ' + e.message); } };
@@ -195,7 +226,7 @@ export default async function (ctx) {
     { let best = null; T.cols.forEach((c, i) => { const k = B.cols.findIndex(d => d.trim().toLowerCase() === c.trim().toLowerCase()); if (k >= 0 && !best) best = [i, k]; }); if (best) { mine.value = best[0]; theirs.value = best[1]; } }  // une colonne au même nom : c'est sûrement elle
     const preview = () => { const r = joinTables(T, B, +mine.value, +theirs.value, mode.value === 'all'); what.textContent = r.hit + ' de tes ' + T.rows.length + ' lignes trouvent une correspondance → ' + r.rows.length + ' lignes, ' + r.cols.length + ' colonnes.'; };
     mine.onchange = theirs.onchange = mode.onchange = preview;
-    const ok = btn('Joindre', () => { const r = joinTables(T, B, +mine.value, +theirs.value, mode.value === 'all'); snapshot(); T = {cols: r.cols, rows: r.rows, from: T.from}; joinBox.style.display = 'none'; save(); render(); toast(r.hit + ' lignes complétées'); });
+    const ok = btn('Joindre', () => { const r = doStep({op: 'join', file: name, col: T.cols[+mine.value], theirs: B.cols[+theirs.value], all: mode.value === 'all'}, B); if (!r) return; const hit = r.hit; delete T.hit; joinBox.style.display = 'none'; toast(hit + ' lignes complétées'); });
     ok.classList.add('main'); ok.id = 'df_jgo';
     const r1 = el('div', 'dfRow'), r2 = el('div', 'dfRow'), r3 = el('div', 'dfRow'), title = el('div'); title.append(el('span', '', 'Joindre '), Object.assign(el('b', '', name), {translate: false}), ' (' + B.rows.length + ' ', el('span', '', 'lignes'), ')');
     r1.append(el('span', 'hint', 'Ma colonne'), mine, el('span', 'hint', '= sa colonne'), theirs); r2.append(mode); r3.append(ok, btn('Fermer', () => joinBox.style.display = 'none'));
@@ -237,19 +268,19 @@ export default async function (ctx) {
     const top = Math.max(1, ...bins.map(b => b[1])), bw = W / Math.max(1, bins.length);
     g.font = '11px monospace'; bins.forEach(([lab, n], i) => { const h = Math.round(n / top * (H - 22)); g.fillStyle = '#ff4fb0'; g.fillRect(Math.floor(i * bw) + 1, H - 12 - h, Math.max(1, Math.floor(bw) - 2), h); if (bw > 20) { g.fillStyle = '#8a7aa8'; g.fillText(String(lab).slice(0, Math.floor(bw / 6)), Math.floor(i * bw) + 1, H - 2); } });
     colOps.replaceChildren(
-      Object.assign(el('input', 'f'), {value: T.cols[c], title: 'Renommer la colonne', translate: false, onchange: e => { const n = e.target.value.trim(); if (!n || T.cols.includes(n)) { e.target.value = T.cols[c]; return; } snapshot(); T.cols[c] = n; save(); render(); }}),
-      btn('Supprimer', () => { if (T.cols.length < 2) return; snapshot(); T.cols.splice(c, 1); T.rows.forEach(r => r.splice(c, 1)); selC = Math.max(0, c - 1); save(); render(); }),
-      btn('Majuscules', () => { snapshot(); T.rows.forEach(r => r[c] = r[c].toUpperCase()); save(); render(); }),
-      btn('Espaces', () => { snapshot(); T.rows.forEach(r => r[c] = r[c].trim().replace(/\s+/g, ' ')); save(); render(); }, 'Enlever les espaces en trop'),
-      btn('Doublons', () => { snapshot(); const seen = new Set(), n0 = T.rows.length; T.rows = T.rows.filter(r => { const k = JSON.stringify(r); if (seen.has(k)) return false; seen.add(k); return true; }); toast((n0 - T.rows.length) + ' doublons enlevés'); save(); render(); }, 'Enlever les lignes en double'),
-      btn('Vides', () => { snapshot(); const n0 = T.rows.length; T.rows = T.rows.filter(r => r[c] !== ''); toast((n0 - T.rows.length) + ' lignes enlevées'); save(); render(); }, 'Enlever les lignes où cette colonne est vide'),
-      btn('Garder le filtre', () => { if (!filter) return toast('Écris d\'abord un filtre'); snapshot(); const keep = new Set(view_()); T.rows = T.rows.filter((_, i) => keep.has(i)); filter = ''; search.value = ''; save(); render(); }, 'Ne garder que les lignes filtrées'));
+      Object.assign(el('input', 'f'), {value: T.cols[c], title: 'Renommer la colonne', translate: false, onchange: e => { const n = e.target.value.trim(); if (!n || T.cols.includes(n)) { e.target.value = T.cols[c]; return; } doStep({op: 'rename', col: T.cols[c], to: n}); }}),
+      btn('Supprimer', () => { if (T.cols.length < 2) return; const k = Math.max(0, c - 1); if (doStep({op: 'delete', col: T.cols[c]})) { selC = k; render(); } }),
+      btn('Majuscules', () => doStep({op: 'upper', col: T.cols[c]})),
+      btn('Espaces', () => doStep({op: 'trim', col: T.cols[c]}), 'Enlever les espaces en trop'),
+      btn('Doublons', () => { const n0 = T.rows.length; if (doStep({op: 'dedupe'})) toast((n0 - T.rows.length) + ' doublons enlevés'); }, 'Enlever les lignes en double'),
+      btn('Vides', () => { const n0 = T.rows.length; if (doStep({op: 'empty', col: T.cols[c]})) toast((n0 - T.rows.length) + ' lignes enlevées'); }, 'Enlever les lignes où cette colonne est vide'),
+      btn('Garder le filtre', () => { if (!filter) return toast('Écris d\'abord un filtre'); const t = filter; filter = ''; search.value = ''; doStep({op: 'keep', text: t}); }, 'Ne garder que les lignes filtrées'));
   }
   // ---------- les colonnes calculées ----------
   const fName = el('input', 'f'), fSrc = el('input', 'f'), fMsg = el('div', 'dfMsg'), fGo = el('button', 'btn px', 'Ajouter');
   fName.placeholder = 'Nom'; fName.value = 'densité'; fSrc.placeholder = '[habitants] / [superficie_km2]'; fSrc.value = '[habitants] / [superficie_km2]'; fSrc.id = 'df_formula'; fName.id = 'df_fname'; fName.translate = fSrc.translate = false;
   fSrc.oninput = () => { try { const f = compileFormula(fSrc.value, T.cols); fMsg.textContent = T.rows.length ? '→ ' + f(T.rows[0]) : ''; } catch (e) { fMsg.textContent = e.message; } };
-  fGo.onclick = () => { let f; try { f = compileFormula(fSrc.value, T.cols); } catch (e) { fMsg.textContent = e.message; return; } const name = fName.value.trim() || 'calcul'; snapshot(); T.cols.push(T.cols.includes(name) ? name + ' ' + (T.cols.length + 1) : name); T.rows.forEach(r => { let v = ''; try { v = f(r); } catch {} r.push(v); }); selC = T.cols.length - 1; save(); render(); };
+  fGo.onclick = () => { try { compileFormula(fSrc.value, T.cols); } catch (e) { fMsg.textContent = e.message; return; } if (doStep({op: 'formula', name: fName.value.trim() || 'calcul', src: fSrc.value})) { selC = T.cols.length - 1; render(); } };
   const r1 = el('div', 'dfRow'), r2 = el('div', 'dfRow'); r1.append(fName); r2.append(fSrc, fGo);
   calc.append(r1, r2, fMsg, el('p', 'dfHelp', 'Les colonnes entre crochets, les opérations + - * / et les fonctions round, abs, min, max, upper, lower, len, concat, si(condition, oui, non).'));
   // ---------- l'export ----------
@@ -259,6 +290,47 @@ export default async function (ctx) {
   const only = el('label', 'hint'), onlyC = el('input'); onlyC.type = 'checkbox'; only.append(onlyC, ' ', el('span', '', 'seulement les lignes filtrées'));
   const exportText = () => FORMATS[fmt.value === 'Excel' ? 'TSV' : fmt.value](T.cols, view_(!onlyC.checked).map(i => T.rows[i]));  // dans l'ordre du tri affiché
   const er = el('div', 'dfRow'); er.append(fmt, dl, cp); out.append(er, only);
-  function render() { renderTable(); renderSide(); fSrc.oninput(); }
+  // ---------- les étapes et les recettes ----------
+  const stList = el('ol', 'dfSteps'), stRow = el('div', 'dfRow'), rcSel = el('select', 'f'), rcRow = el('div', 'dfRow'), file3 = el('input'), stMsg = el('div', 'dfMsg');
+  stList.id = 'df_steps'; rcSel.id = 'df_recipe'; rcSel.translate = false; file3.type = 'file'; file3.multiple = true; file3.accept = file.accept; file3.style.display = 'none'; stMsg.id = 'df_stmsg';
+  const saveR = btn('Enregistrer la recette', async () => { if (!steps.length) return toast('Aucune étape pour l’instant : chaque changement du tableau en ajoute une'); const n = String(await ctx.host.ask?.('Nom de la recette :', Object.keys(recipes).length ? '' : 'Ma recette') || '').trim().slice(0, 40); if (!n) return;
+    recipes[n] = steps.map(x => ({...x})); save(); renderSteps(); rcSel.value = n; toast('Recette « ' + n + ' » : ' + steps.length + ' étape' + (steps.length > 1 ? 's' : '')); }, 'Garder ces étapes sous un nom, pour les rejouer sur un autre fichier');
+  saveR.id = 'df_rsave';
+  const joinsOf = list => [...new Set(list.filter(x => x.op === 'join').map(x => x.file))];
+  // rejouer : tout ou rien ; une étape impossible arrête et laisse le tableau comme avant
+  function replay(list, base, tables = {}) {
+    let cur = base;
+    for (let k = 0; k < list.length; k++) { try { cur = applyStep(cur, list[k], list[k].op === 'join' ? tables[list[k].file] : null); } catch (e) { return {ok: false, msg: 'Étape ' + (k + 1) + ' (' + stepText(list[k]) + ') impossible : ' + e.message + '. Rien n’a changé.'}; } }
+    delete cur.hit; return {ok: true, T: cur};
+  }
+  function finish(r, name, list, loaded) {
+    if (!r.ok) { stMsg.textContent = r.msg; return false; }
+    snapshot(); T = r.T; steps = loaded ? [...list] : [...steps, ...list]; sortC = -1; filter = ''; search.value = ''; save(); render(); stMsg.textContent = '';
+    toast('Recette « ' + name + ' » : ' + list.length + ' étape' + (list.length > 1 ? 's' : '') + ' rejouée' + (list.length > 1 ? 's' : '') + ', ' + T.rows.length + ' lignes'); return true;
+  }
+  // les fichiers choisis d'un coup : le fichier à transformer (pour « sur un fichier »), et ceux à joindre, reconnus à leur nom (sinon dans l'ordre)
+  let pending = null;
+  file3.onchange = async () => { const fl = [...file3.files], p = pending; file3.value = ''; pending = null; if (!p || !fl.length) return; let read;
+    try { read = await Promise.all(fl.map(async f => ({name: f.name, T: await readFile(f)}))); } catch (e) { return toast('Lecture impossible : ' + e.message, true); }
+    const tables = {}, rest = [...read]; for (const n of p.joins) { const k = rest.findIndex(x => x.name === n); if (k >= 0) tables[n] = rest.splice(k, 1)[0].T; }
+    let main = T; if (p.onFile) { const m = rest.shift(); if (!m) return toast('Choisis aussi le fichier à transformer', true); main = m.T; }
+    for (const n of p.joins) if (!tables[n]) { const x = rest.shift(); if (x) tables[n] = x.T; }
+    finish(replay(p.list, main, tables), p.name, p.list, p.onFile); };
+  const runR = onFile => { const n = rcSel.value, list = recipes[n]; if (!list) return toast('Enregistre d’abord une recette', true); const joins = joinsOf(list);
+    if (!onFile && !joins.length) return finish(replay(list, T), n, list, false);
+    pending = {name: n, list, joins, onFile}; if (joins.length) toast((onFile ? 'Choisis le fichier à transformer et ' : 'Choisis ') + joins.map(j => '« ' + j + ' »').join(', ') + ' (Ctrl + clic pour plusieurs)'); file3.click(); };
+  const playB = btn('Rejouer ici', () => runR(false), 'Rejouer la recette sur le tableau affiché'), playF = btn('Sur un fichier…', () => runR(true), 'Ouvrir un fichier et lui appliquer la recette');
+  const delR = btn('✕', async () => { const n = rcSel.value; if (!recipes[n] || !(await ctx.host.confirm?.('Supprimer la recette « ' + n + ' » ?') ?? true)) return; delete recipes[n]; save(); renderSteps(); }, 'Supprimer cette recette');
+  playB.id = 'df_rplay'; playF.id = 'df_rfile';
+  stRow.append(saveR); rcRow.append(rcSel, playB, playF, delR);
+  side.append(el('span', 'label', 'Étapes'), stList, stRow, el('span', 'label', 'Recettes'), rcRow, stMsg, file3);
+  function renderSteps() {
+    stList.replaceChildren(...steps.map(x => el('li', '', stepText(x)))); if (!steps.length) stList.append(Object.assign(el('li', 'hint', 'Chaque changement du tableau s’ajoute ici.'), {style: 'list-style:none'}));
+    const cur = rcSel.value; rcSel.replaceChildren(...Object.keys(recipes).map(n => new Option(n + ' (' + recipes[n].length + ')', n))); if (recipes[cur]) rcSel.value = cur;
+    for (const b of [playB, playF, delR]) b.disabled = !rcSel.options.length;
+  }
+  view.__df = { replay: (n, texts = {}) => finish(replay(recipes[n], T, Object.fromEntries(Object.entries(texts).map(([k, v]) => [k, parse(v)]))), n, recipes[n], false), load: (text, name) => load(text, name), steps: () => steps.map(stepText), save: n => { recipes[n] = steps.map(x => ({...x})); save(); renderSteps(); return Object.keys(recipes); }, msg: () => stMsg.textContent,
+    table: () => ({cols: T.cols, rows: T.rows}), join: (text, name, mine, theirs) => { const B = parse(text); const r = doStep({op: 'join', file: name, col: mine, theirs, all: true}, B); if (r) delete T.hit; return !!r; }, drop: n => { delete recipes[n]; save(); renderSteps(); } };  // le test
+  function render() { renderTable(); renderSide(); renderSteps(); fSrc.oninput(); }
   render();
 }

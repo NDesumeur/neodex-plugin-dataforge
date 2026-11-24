@@ -35,5 +35,22 @@ module.exports = async ({ pj, sleep }) => {
   await pj(`document.getElementById('df_jgo').click(), 0`); await sleep(200);
   const joined = await pj(`[...document.querySelectorAll('#df_table tr')].slice(1).map(r => r.cells[1].textContent + '=' + r.cells[r.cells.length - 1].textContent)`);
   if (!/10 lignes · 6 colonnes/.test(await info()) || !joined.includes('Paris=Anne Hidalgo') || !joined.includes('Genève=Christina Kitsos') || !joined.includes('Toulouse=∅')) throw new Error('jointure : ' + await info() + ' ' + joined.join(', '));
-  return 'tri, filtre, stats, colonne calculée, JSON, annuler, ' + excel + ', jointure (3 villes complétées) ok';
+  // les étapes : la colonne calculée et la jointure sont notées ; gardées en recette, puis rejouées sur un autre fichier des mêmes colonnes
+  const D = `document.getElementById('df_table').closest('.appWrap').parentElement.__df`;
+  const st = await pj(`${D}.steps()`);
+  if (st.length !== 2 || !/^Nouvelle colonne « densité »/.test(st[0]) || !/^Joindre « maires\.csv » : « ville » = « Ville »/.test(st[1])) throw new Error('étapes : ' + JSON.stringify(st));
+  if (await pj(`document.querySelectorAll('#df_steps li').length`) !== 2) throw new Error('liste des étapes');
+  await pj(`${D}.save('Villes et maires')`);
+  const OTHER = 'ville;pays;habitants;superficie_km2\nLyon;France;522 250;47,87\nNantes;France;320 732;65,19\nAnnecy;France;130 721;66,94', MAIRES = 'Ville;maire\nLyon;Jean Martin\nNantes;Claire Dubois';
+  await pj(`${D}.load(${JSON.stringify(OTHER)}, 'autres.csv')`); await sleep(200);
+  if ((await pj(`${D}.steps()`)).length) throw new Error('un nouveau fichier garde les étapes de l’ancien');
+  await pj(`${D}.replay('Villes et maires', { 'maires.csv': ${JSON.stringify(MAIRES)} })`); await sleep(200);
+  const t2 = await pj(`${D}.table()`);
+  if (t2.cols.join() !== 'ville,pays,habitants,superficie_km2,densité,maire' || t2.rows[0][5] !== 'Jean Martin' || t2.rows[2][5] !== '' || Math.round(+t2.rows[1][4]) !== 4920) throw new Error('recette rejouée : ' + JSON.stringify(t2));
+  // un fichier sans la bonne colonne : arrêt clair, tableau inchangé
+  await pj(`${D}.load(${JSON.stringify('nom;valeur\nA;1')}, 'mauvais.csv')`); await sleep(100);
+  await pj(`${D}.replay('Villes et maires', {})`); const m = await pj(`${D}.msg()`), t3 = await pj(`${D}.table()`);
+  if (!/^Étape 1 .* impossible/.test(m) || t3.cols.join() !== 'nom,valeur') throw new Error('recette impossible : ' + m + ' ' + JSON.stringify(t3));
+  await pj(`${D}.drop('Villes et maires')`);  // le profil de test reste propre
+  return 'tri, filtre, stats, colonne calculée, JSON, annuler, ' + excel + ', jointure (3 villes complétées) ok · étapes notées, recette rejouée sur un autre fichier (densité + maires), arrêt clair si une colonne manque';
 };

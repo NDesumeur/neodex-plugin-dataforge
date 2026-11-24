@@ -6,6 +6,10 @@ Ouvre, explore et transforme des données en tableau, sans tableur.
 
 ![DataForge](screenshots/1.jpg)
 
+## Étapes et recettes (nouveau en 1.2.0)
+
+Chaque changement du tableau devient une étape. Garde-les en recette, et rejoue-la d'un clic sur le tableau affiché ou sur un nouveau fichier (avec ses jointures).
+
 ## Ouvrir
 
 - **Ouvrir un fichier** (.csv, .tsv, .txt, .json, 30 Mo au plus) ou **Coller des données** (par exemple des cellules copiées depuis un tableur).
@@ -37,3 +41,12 @@ Le dernier tableau ouvert est gardé dans le dossier du plugin (sauf s'il est tr
 - **Joindre un fichier** : ouvre un deuxième fichier (CSV, TSV, JSON ou Excel), choisis ta colonne et la sienne (DataForge propose d’office celle qui porte le même nom), puis « Garder toutes mes lignes » ou « Seulement celles qui correspondent ». Ses colonnes s’ajoutent à droite ; les majuscules et les espaces autour sont ignorés pour comparer. Avant de joindre, DataForge dit combien de tes lignes trouvent une correspondance. ↶ Annuler défait la jointure.
 - **Excel** : « Ouvrir un fichier » lit les .xlsx (la première feuille ; les dates deviennent jj/mm/aaaa) et l’export propose « Excel (.xlsx) ». Les nombres, même écrits à la française, deviennent de vrais nombres dans Excel ; les numéros qui commencent par 0 restent du texte. L’ancien format .xls n’est pas lu : enregistre-le d’abord en .xlsx.
 - **Lisibilité** : textes plus grands, et le tableau prend la hauteur de la fenêtre.
+
+## Les étapes et les recettes (1.2.0)
+
+Chaque changement du tableau est noté dans **Étapes**, en bas à droite : renommer, supprimer une colonne, majuscules, espaces, doublons, lignes vides, garder le filtre, nouvelle colonne calculée, jointure. **Annuler** retire aussi la dernière étape.
+
+- **Enregistrer la recette** garde ces étapes sous un nom.
+- **Rejouer ici** les applique au tableau affiché ; **Sur un fichier…** ouvre un fichier et les lui applique. Pratique pour le même export chaque mois.
+- Les étapes désignent les colonnes par leur **nom** : le nouveau fichier doit avoir les mêmes. S’il en manque une, rien ne change et DataForge dit quelle étape bloque.
+- Une recette qui contient une jointure redemande le fichier à joindre : choisis-le dans la même fenêtre (Ctrl + clic pour en prendre plusieurs).
