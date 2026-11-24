@@ -1,9 +1,9 @@
 {
   "pluginId": "neodex.dataforge",
   "repo": "NDesumeur/neodex-plugin-dataforge",
-  "version": "1.1.0",
-  "sha256": "fe7abcad7b4d5ddda1209b79e63447f75f7dd07e854022dffbfff724fb706464",
-  "approvedAt": "2026-11-16T04:14:35.108Z",
+  "version": "1.2.0",
+  "sha256": "c5c9adb7fd3bae0281a3579c96423ba9c8543c45f4a4bbda6635865019a50f1c",
+  "approvedAt": "2026-11-24T15:56:20.742Z",
   "neobase": ">=4.0.0",
-  "signature": "hzTBbV0Hgbmmw70siD69JdZoQdHz/lWYoxjryIHTuK3XmBaQDjPLgIGrYop6DyGBkob6MvxRMW9Tl0mb+Q2YDA=="
+  "signature": "frWHh8QhBRGfIo824bL9sRn4qSbnzmtpRalTVftXT5c6LIN7DJ+B76MGcJ5QKlh1SxPnN+gBdDJrdiO1qJf1Cg=="
 }
